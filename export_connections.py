@@ -3,6 +3,11 @@
 # please make sure all rotations are in quaternions except for animations
 # does not support delta_location or delta_rotation
 # parts that are animated need their origin to be at their center => at  0, 0, 0
+# limitations regarding animations:
+# - need to pick between having an offset (for either rotation or location) or an animation
+# - if mixed will behave weirdly, especially with a parent set
+# - rotation animations which have parents which rotate as well don't work
+
 
 import bpy
 import copy
@@ -82,6 +87,9 @@ def sorted_animations(obj):
 
     nla_tracks = obj.animation_data.nla_tracks
     for nt in obj.animation_data.nla_tracks:
+        if nt.mute:
+            logging.info("Animation %s_%s is muted", obj.name, nt.name)
+            continue
         for strip in nt.strips:
             assert strip.action_frame_start % 1 == 0
             assert strip.action_frame_end % 1 == 0
@@ -203,29 +211,22 @@ def add_offset(xml_conn, obj):
     anims = gen_anims(obj)
     
     # Only add offset element if it's not controlled by animations
-    add_loc = True
-    add_rot = True
+    anim_loc = False
+    anim_rot = False
     if len(anims):
         if "loc_kfs_x" in anims[0]:
-            add_loc = False
+            anim_loc = True
         if "rot_kfs_x" in anims[0]:
-            add_rot = False
+            anim_rot = True
 
-    if add_loc:
-        # offset relative to parent
+    if not anim_loc:
         loc_x, loc_y, loc_z = obj.location.xzy
-        if obj.parent is not None:
-            par_x, par_y, par_z = obj.parent.location.xzy
-            loc_x -= par_x
-            loc_y -= par_y
-            loc_z -= par_z
         xml_pos = ET.SubElement(xml_offset, "position",
             x=str(round(loc_x, ROUND_POSITION)), y=str(round(loc_y, ROUND_POSITION)), z=str(round(loc_z, ROUND_POSITION)))
 
-    if add_rot:
-        # swap y & z + change from left hand to right hand
-        rot = quat_right_to_left_hand(obj.rotation_quaternion)
-        xml_rot = ET.SubElement(xml_offset, "quaternion",
+    if not anim_rot:
+      rot = quat_right_to_left_hand(obj.rotation_quaternion)
+      xml_rot = ET.SubElement(xml_offset, "quaternion",
            qx=str(round(rot.x, ROUND_ROTATION)), qy=str(round(rot.z, ROUND_ROTATION)),
            qz=str(round(rot.y, ROUND_ROTATION)), qw=str(round(rot.w, ROUND_ROTATION)))
 
@@ -431,7 +432,6 @@ def gen_ani(ani_file):
             
 
             anims += gen_anims(obj)
-    logging.info("ANIAMSIDNAISND: %d", len(anims))
     ani_file.write(pack('IIII', int(len(anims)), int(16 + len(anims) * 160), int(1), int(0))) # Write 16-byte header:'number of animations','KeyOffsetBytes'(16 + len(anims)*160),'Version','Padding'
     write_ani_descr(ani_file, anims)
     write_ani_keyframes(ani_file, anims)
